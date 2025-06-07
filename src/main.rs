@@ -1,13 +1,3 @@
-//! Калькулятор на Rust с парсером выражений на nom 8, поддержкой переменных, функций и REPL.
-//!
-//! # Модули
-//! - ast: абстрактное синтаксическое дерево (AST)
-//! - parser: парсер выражений и присваиваний
-//! - eval: вычисление выражений
-//! - main: REPL-оболочка
-
-use std::io::{self, Write};
-
 /// AST (абстрактное синтаксическое дерево)
 pub mod ast {
     use serde::{Deserialize, Serialize};
@@ -521,51 +511,76 @@ pub mod eval {
     }
 }
 
-/// REPL-оболочка калькулятора
-fn main() {
-    let mut ctx = eval::Context::new();
-    println!(
-        "Rust Calc v2 (nom 8). 'exit' для выхода, 'deg'/'rad' — переключение градусов/радиан."
-    );
-    loop {
-        print!("> ");
-        io::stdout().flush().unwrap();
-        let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
-            break;
-        }
-        let line = input.trim();
-        if line.eq_ignore_ascii_case("exit") {
-            break;
-        }
-        if line.eq_ignore_ascii_case("deg") {
-            ctx.angle_in_deg = true;
-            println!("→ градусов");
-            continue;
-        }
-        if line.eq_ignore_ascii_case("rad") {
-            ctx.angle_in_deg = false;
-            println!("→ радианы");
-            continue;
-        }
-        match parser::statement(line) {
-            Ok((rest, stmt)) if rest.trim().is_empty() => match eval::eval_stmt(&stmt, &mut ctx) {
-                Ok(v) => println!("= {v}"),
-                Err(e) => eprintln!("err: {e}"),
-            },
-            Ok((_rest, _)) => eprintln!("Неразобранный хвост"),
-            Err(e) => eprintln!("Parse error: {:?}", e),
-        }
-    }
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    use teloxide::{
+        prelude::*,
+        types::{
+            InlineQueryResult, InlineQueryResultArticle, InputMessageContent, InputMessageContentText,
+        },
+    };
+    use dotenvy::dotenv;
+
+    dotenv().ok();
+    pretty_env_logger::init();
+    log::info!("Starting evalicious bot…");
+
+    let bot = Bot::from_env();
+
+    let handler = Update::filter_inline_query().branch(dptree::endpoint(
+        |bot: Bot, q: InlineQuery| async move {
+            let solve = InlineQueryResultArticle::new(
+                q.id.clone(),
+                "Evalicious Result",
+                InputMessageContent::Text(InputMessageContentText::new("This is a placeholder response.")),
+            ).description("Evaluates mathematical expressions.");
+
+            let results = vec![
+                InlineQueryResult::Article(solve)
+            ];
+
+            let response = bot.answer_inline_query(&q.id, results).send().await;
+            if let Err(e) = response {
+                log::error!("Failed to answer inline query: {}", e);
+            }
+            log::info!("Received inline query: {:?}", q);
+            respond(())
+        },
+    ));
+
+    Dispatcher::builder(bot, handler).enable_ctrlc_handler().build().dispatch().await;
+    //             if expr.is_empty() {
+    //                 return respond(&("ℹ️  Пришлите выражение после упоминания: `@".to_owned()
+    //                     + &my_username
+    //                     + " 2+2*2`\nили в личном чате просто выражение."));
+    //             }
+
+    //             // 2. Пытаемся разобрать
+    //             match parser::statement(expr) {
+    //                 Ok((rest, stmt)) if rest.trim().is_empty() => {
+    //                     let mut ctx = eval::Context::new();
+    //                     match eval::eval_stmt(&stmt, &mut ctx) {
+    //                         Ok(val) => respond(format!("`{}` = *{}*", expr, val)).await,
+    //                         Err(e) => respond(format!("❌ Ошибка вычисления: {}", e)).await,
+    //                     }
+    //                 }
+    //                 Ok(_) => respond("❌ Не удалось разобрать: есть хвост после выражения").await,
+    //                 Err(e) => respond(format!("❌ Parse error: {:?}", e)).await,
+    //             }
+    //         } else {
+    //             respond("").await
+    //         }
+    //     }
+    // })
+    // .await;
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    /// Выполнить выражение в новом контексте
-    ///
-    /// # Параметры
-    /// - `s`: строка выражения
+
     fn eval_once(s: &str) -> f64 {
         let mut ctx = eval::Context::new();
         let (_, st) = parser::statement(s).unwrap();
@@ -576,5 +591,29 @@ mod tests {
         assert_eq!(eval_once("2+3*4"), 14.0);
         assert_eq!(eval_once("(2+3)*4"), 20.0);
         assert_eq!(eval_once("2^3^2"), 512.0);
+    }
+
+    #[test]
+    fn test_functions() {
+        assert_eq!(eval_once("sqrt(4)"), 2.0);
+        assert!((eval_once("sin(pi/2)") - 1.0).abs() < 1e-8);
+        assert_eq!(eval_once("log(e)"), 1.0);
+        assert_eq!(eval_once("abs(-5)"), 5.0);
+    }
+
+    #[test]
+    fn test_vars() {
+        let mut ctx = eval::Context::new();
+        let (_, st1) = parser::statement("x=3").unwrap();
+        eval::eval_stmt(&st1, &mut ctx).unwrap();
+        let (_, st2) = parser::statement("x^2+1").unwrap();
+        assert_eq!(eval::eval_stmt(&st2, &mut ctx).unwrap(), 10.0);
+    }
+
+    #[test]
+    fn test_sums_and_clamp() {
+        assert_eq!(eval_once("sum(1,2,3,4)"), 10.0);
+        assert_eq!(eval_once("clamp(7, 1, 5)"), 5.0);
+        assert_eq!(eval_once("clamp(0, 1, 5)"), 1.0);
     }
 }
