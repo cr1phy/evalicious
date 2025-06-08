@@ -1,3 +1,5 @@
+use teloxide::utils::{html::italic, markdown::{bold, escape, escape_code}};
+
 mod ast;
 mod eval;
 mod parser;
@@ -22,51 +24,27 @@ async fn main() -> anyhow::Result<()> {
     let handler = Update::filter_inline_query().branch(dptree::endpoint(
         |bot: Bot, q: InlineQuery| async move {
             let expr = &q.query;
-            let escape_md = |s: &str| {
-                s.replace('_', "\\_")
-                    .replace('*', "\\*")
-                    .replace('[', "\\[")
-                    .replace(']', "\\]")
-                    .replace('(', "\\(")
-                    .replace(')', "\\)")
-                    .replace('~', "\\~")
-                    .replace('`', "\\`")
-                    .replace('>', "\\>")
-                    .replace('#', "\\#")
-                    .replace('+', "\\+")
-                    .replace('-', "\\-")
-                    .replace('=', "\\=")
-                    .replace('|', "\\|")
-                    .replace('{', "\\{")
-                    .replace('}', "\\}")
-                    .replace('.', "\\.")
-                    .replace('!', "\\!")
-            };
-
             let result = match parser::statement(expr) {
                 Ok((rest, stmt)) if rest.trim().is_empty() => {
                     let mut ctx = eval::Context::new();
                     match eval::eval_stmt(&stmt, &mut ctx) {
                         Ok(val) => {
-                            let expr_fmt = escape_md(expr);
                             let val_fmt = format!("{val:.8}")
                                 .trim_end_matches('0')
                                 .trim_end_matches('.')
                                 .to_string();
-                            format!("🧮 Пример:\n`{}`\n\n📏 Ответ:\n**{}**", expr_fmt, val_fmt)
+                            format!("🧮 Пример:\n{}\n\n📏 Ответ:\n{}", escape_code(&expr), escape_code(&val_fmt))
                         }
                         Err(e) => {
-                            let expr_fmt = escape_md(expr);
-                            let err_fmt = escape_md(&e.to_string());
                             format!(
-                                "❌ Не удалось вычислить пример:\n`{}`\nПричина: _{}_",
-                                expr_fmt, err_fmt
+                                "❌ Не удалось вычислить пример:\n{}\nПричина: {}",
+                                escape_code(&expr), escape_code(&e.to_string())
                             )
                         }
                     }
                 }
                 Ok(_) => "❌ Не удалось разобрать пример: лишний текст после выражения".to_string(),
-                Err(e) => format!("❌ Ошибка парсинга: _{}_", escape_md(&e.to_string())),
+                Err(e) => format!("❌ Ошибка парсинга: _{}_", italic(&e.to_string())),
             };
 
             let solve = InlineQueryResultArticle::new(
